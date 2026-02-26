@@ -23,7 +23,7 @@ func TestPodScanner_ScanPod(t *testing.T) {
 					Containers: []corev1.Container{
 						{
 							Name:  "secure-container",
-							Image: "nginx:latest",
+							Image: "nginx:1.21.0",
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:                int64Ptr(1000),
 								ReadOnlyRootFilesystem:   boolPtr(true),
@@ -51,7 +51,7 @@ func TestPodScanner_ScanPod(t *testing.T) {
 					Containers: []corev1.Container{
 						{
 							Name:  "privileged-container",
-							Image: "nginx:latest",
+							Image: "nginx:1.21.0",
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: boolPtr(true),
 							},
@@ -70,7 +70,7 @@ func TestPodScanner_ScanPod(t *testing.T) {
 					Containers: []corev1.Container{
 						{
 							Name:  "insecure-container",
-							Image: "nginx:latest",
+							Image: "nginx:1.21.0",
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:              int64Ptr(0),
 								ReadOnlyRootFilesystem: boolPtr(false),
