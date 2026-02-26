@@ -1,4 +1,4 @@
-# Codex Branch Guidelines
+# Gemini Branch Guidelines
 
 This branch is for gemini agent only.
 
