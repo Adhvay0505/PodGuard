@@ -23,7 +23,7 @@ func (s *NetworkPolicyScanner) ScanNetworkPolicy(policy *networkingv1.NetworkPol
 func (s *NetworkPolicyScanner) checkIngressRules(policy *networkingv1.NetworkPolicy) []SecurityIssue {
 	var issues []SecurityIssue
 
-	if policy.Spec.Ingress == nil || len(policy.Spec.Ingress) == 0 {
+	if len(policy.Spec.Ingress) == 0 {
 		return issues
 	}
 
@@ -40,23 +40,13 @@ func (s *NetworkPolicyScanner) checkIngressRules(policy *networkingv1.NetworkPol
 		}
 
 		for _, from := range ingress.From {
-			if from.IPBlock == nil && len(from.NamespaceSelector.MatchLabels) == 0 && len(from.PodSelector.MatchLabels) == 0 {
+			if from.IPBlock == nil && from.NamespaceSelector == nil && from.PodSelector == nil {
 				issues = append(issues, SecurityIssue{
 					Severity:    "MEDIUM",
 					Resource:    "NetworkPolicy",
 					Namespace:   policy.Namespace,
 					Name:        policy.Name,
-					Description: "NetworkPolicy ingress rule allows traffic from all namespaces/pods",
-				})
-			}
-
-			if from.IPBlock != nil && from.IPBlock.Except == nil {
-				issues = append(issues, SecurityIssue{
-					Severity:    "LOW",
-					Resource:    "NetworkPolicy",
-					Namespace:   policy.Namespace,
-					Name:        policy.Name,
-					Description: "NetworkPolicy ingress rule allows traffic from any IP block (CIDR)",
+					Description: "NetworkPolicy ingress rule allows traffic from all sources",
 				})
 			}
 		}
@@ -67,7 +57,7 @@ func (s *NetworkPolicyScanner) checkIngressRules(policy *networkingv1.NetworkPol
 func (s *NetworkPolicyScanner) checkEgressRules(policy *networkingv1.NetworkPolicy) []SecurityIssue {
 	var issues []SecurityIssue
 
-	if policy.Spec.Egress == nil || len(policy.Spec.Egress) == 0 {
+	if len(policy.Spec.Egress) == 0 {
 		return issues
 	}
 
@@ -84,23 +74,13 @@ func (s *NetworkPolicyScanner) checkEgressRules(policy *networkingv1.NetworkPoli
 		}
 
 		for _, to := range egress.To {
-			if to.IPBlock == nil && len(to.NamespaceSelector.MatchLabels) == 0 && len(to.PodSelector.MatchLabels) == 0 {
+			if to.IPBlock == nil && to.NamespaceSelector == nil && to.PodSelector == nil {
 				issues = append(issues, SecurityIssue{
 					Severity:    "MEDIUM",
 					Resource:    "NetworkPolicy",
 					Namespace:   policy.Namespace,
 					Name:        policy.Name,
-					Description: "NetworkPolicy egress rule allows traffic to all namespaces/pods",
-				})
-			}
-
-			if to.IPBlock != nil && to.IPBlock.Except == nil {
-				issues = append(issues, SecurityIssue{
-					Severity:    "LOW",
-					Resource:    "NetworkPolicy",
-					Namespace:   policy.Namespace,
-					Name:        policy.Name,
-					Description: "NetworkPolicy egress rule allows traffic to any IP block (CIDR)",
+					Description: "NetworkPolicy egress rule allows traffic to all destinations",
 				})
 			}
 		}
@@ -116,10 +96,10 @@ func (s *NetworkPolicyScanner) checkPolicyTypes(policy *networkingv1.NetworkPoli
 	hasEgress := false
 
 	for _, pt := range policy.Spec.PolicyTypes {
-		if pt == "Ingress" {
+		if pt == networkingv1.PolicyTypeIngress {
 			hasIngress = true
 		}
-		if pt == "Egress" {
+		if pt == networkingv1.PolicyTypeEgress {
 			hasEgress = true
 		}
 	}
@@ -148,26 +128,21 @@ func (s *NamespaceScanner) ScanNamespace(namespace string, policies []networking
 
 	hasDefaultDenyIngress := false
 	hasDefaultDenyEgress := false
-	hasAnyEgressPolicy := false
 
 	for _, policy := range policies {
 		if policy.Namespace != namespace {
 			continue
 		}
 
-		policyTypeSet := policyTypes(&policy)
-
 		if isDefaultDenyPolicy(&policy) {
-			if policyTypeSet[networkingv1.PolicyTypeIngress] && len(policy.Spec.Ingress) == 0 {
-				hasDefaultDenyIngress = true
+			for _, pt := range policy.Spec.PolicyTypes {
+				if pt == networkingv1.PolicyTypeIngress && len(policy.Spec.Ingress) == 0 {
+					hasDefaultDenyIngress = true
+				}
+				if pt == networkingv1.PolicyTypeEgress && len(policy.Spec.Egress) == 0 {
+					hasDefaultDenyEgress = true
+				}
 			}
-			if policyTypeSet[networkingv1.PolicyTypeEgress] && len(policy.Spec.Egress) == 0 {
-				hasDefaultDenyEgress = true
-			}
-		}
-
-		if policyTypeSet[networkingv1.PolicyTypeEgress] {
-			hasAnyEgressPolicy = true
 		}
 	}
 
@@ -191,45 +166,9 @@ func (s *NamespaceScanner) ScanNamespace(namespace string, policies []networking
 		})
 	}
 
-	if !hasAnyEgressPolicy {
-		issues = append(issues, SecurityIssue{
-			Severity:    "MEDIUM",
-			Resource:    "Namespace",
-			Namespace:   namespace,
-			Name:        namespace,
-			Description: "Namespace has no egress NetworkPolicies defined",
-		})
-	}
-
 	return issues
 }
 
 func isDefaultDenyPolicy(policy *networkingv1.NetworkPolicy) bool {
-	if len(policy.Spec.PodSelector.MatchLabels) == 0 && len(policy.Spec.PodSelector.MatchExpressions) == 0 {
-		return true
-	}
-
-	return false
-}
-
-func policyTypes(policy *networkingv1.NetworkPolicy) map[networkingv1.PolicyType]bool {
-	types := make(map[networkingv1.PolicyType]bool)
-	if len(policy.Spec.PolicyTypes) > 0 {
-		for _, policyType := range policy.Spec.PolicyTypes {
-			types[policyType] = true
-		}
-		return types
-	}
-
-	if len(policy.Spec.Ingress) > 0 {
-		types[networkingv1.PolicyTypeIngress] = true
-	}
-	if len(policy.Spec.Egress) > 0 {
-		types[networkingv1.PolicyTypeEgress] = true
-	}
-	if len(types) == 0 {
-		types[networkingv1.PolicyTypeIngress] = true
-	}
-
-	return types
+	return len(policy.Spec.PodSelector.MatchLabels) == 0 && len(policy.Spec.PodSelector.MatchExpressions) == 0
 }

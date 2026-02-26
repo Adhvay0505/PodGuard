@@ -15,8 +15,7 @@ func NewServiceAccountScanner() *ServiceAccountScanner {
 func (s *ServiceAccountScanner) ScanServiceAccount(sa *corev1.ServiceAccount) []SecurityIssue {
 	var issues []SecurityIssue
 
-	automount := sa.AutomountServiceAccountToken
-	if automount == nil || *automount {
+	if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
 		severity := "LOW"
 		if sa.Name == "default" {
 			severity = "MEDIUM"
@@ -26,7 +25,7 @@ func (s *ServiceAccountScanner) ScanServiceAccount(sa *corev1.ServiceAccount) []
 			Resource:    "ServiceAccount",
 			Namespace:   sa.Namespace,
 			Name:        sa.Name,
-			Description: fmt.Sprintf("ServiceAccount '%s' is automounting the service account token", sa.Name),
+			Description: fmt.Sprintf("ServiceAccount '%s' automounts service account token", sa.Name),
 		})
 	}
 

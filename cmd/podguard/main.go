@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 
 	"podguard/pkg/k8s"
@@ -20,9 +19,8 @@ import (
 func main() {
 	kubeconfig := flag.String("kubeconfig", "", "Path to kubeconfig file")
 	namespace := flag.String("namespace", "", "Namespace to scan (default: all namespaces)")
-	outputFormat := flag.String("output", "table", "Output format (table, json, markdown)")
-	outputFile := flag.String("output-file", "", "Write output to a file (optional)")
-	scanType := flag.String("type", "all", "Scan type (pods, rbac, network, resources, serviceaccounts, ingress, all)")
+	outputFormat := flag.String("output", "table", "Output format (table, json)")
+	scanType := flag.String("type", "all", "Scan type (pods, rbac, resources, network, sa, nodes, availability, quotas, all)")
 	flag.Parse()
 
 	client, err := k8s.NewClient(*kubeconfig)
@@ -33,117 +31,77 @@ func main() {
 	var allIssues []scanner.SecurityIssue
 
 	if *scanType == "pods" || *scanType == "all" {
-		podIssues := scanPods(client, *namespace)
-		allIssues = append(allIssues, podIssues...)
+		allIssues = append(allIssues, scanPods(client, *namespace)...)
 	}
 
 	if *scanType == "rbac" || *scanType == "all" {
-		rbacIssues := scanRBAC(client, *namespace)
-		allIssues = append(allIssues, rbacIssues...)
+		allIssues = append(allIssues, scanRBAC(client, *namespace)...)
 	}
 
 	if *scanType == "resources" || *scanType == "all" {
-		resourceIssues := scanResources(client, *namespace)
-		allIssues = append(allIssues, resourceIssues...)
+		allIssues = append(allIssues, scanResources(client, *namespace)...)
 	}
 
 	if *scanType == "network" || *scanType == "all" {
-		networkIssues := scanNetwork(client, *namespace)
-		allIssues = append(allIssues, networkIssues...)
+		allIssues = append(allIssues, scanNetwork(client, *namespace)...)
 	}
 
-	if *scanType == "serviceaccounts" || *scanType == "all" {
-		serviceAccountIssues := scanServiceAccounts(client, *namespace)
-		allIssues = append(allIssues, serviceAccountIssues...)
+	if *scanType == "sa" || *scanType == "all" {
+		allIssues = append(allIssues, scanServiceAccounts(client, *namespace)...)
 	}
 
-	if *scanType == "ingress" || *scanType == "all" {
-		ingressIssues := scanIngress(client, *namespace)
-		allIssues = append(allIssues, ingressIssues...)
+	if *scanType == "nodes" || *scanType == "all" {
+		allIssues = append(allIssues, scanNodes(client)...)
 	}
 
-	outputResults(allIssues, *outputFormat, *outputFile)
+	if *scanType == "availability" || *scanType == "all" {
+		allIssues = append(allIssues, scanAvailability(client, *namespace)...)
+	}
+
+	if *scanType == "quotas" || *scanType == "all" {
+		allIssues = append(allIssues, scanQuotas(client, *namespace)...)
+	}
+
+	outputResults(allIssues, *outputFormat)
 }
 
 func scanPods(client *k8s.Client, namespace string) []scanner.SecurityIssue {
 	var issues []scanner.SecurityIssue
 	podScanner := scanner.NewPodScanner()
-
-	var pods *corev1.PodList
-	var err error
-
-	if namespace != "" {
-		pods, err = client.Clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
-	} else {
-		pods, err = client.Clientset.CoreV1().Pods("").List(context.Background(), metav1.ListOptions{})
-	}
-
+	pods, err := client.Clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		log.Printf("Failed to list pods: %v", err)
 		return issues
 	}
-
 	for _, pod := range pods.Items {
-		podIssues := podScanner.ScanPod(&pod)
-		issues = append(issues, podIssues...)
+		issues = append(issues, podScanner.ScanPod(&pod)...)
 	}
-
-	return issues
-}
-
-func scanResources(client *k8s.Client, namespace string) []scanner.SecurityIssue {
-	var issues []scanner.SecurityIssue
-	resourceScanner := scanner.NewResourceScanner()
-
-	var pods *corev1.PodList
-	var err error
-
-	if namespace != "" {
-		pods, err = client.Clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
-	} else {
-		pods, err = client.Clientset.CoreV1().Pods("").List(context.Background(), metav1.ListOptions{})
-	}
-
-	if err != nil {
-		log.Printf("Failed to list pods for resource scan: %v", err)
-		return issues
-	}
-
-	for _, pod := range pods.Items {
-		podIssues := resourceScanner.ScanPodResources(&pod)
-		issues = append(issues, podIssues...)
-	}
-
 	return issues
 }
 
 func scanRBAC(client *k8s.Client, namespace string) []scanner.SecurityIssue {
 	var issues []scanner.SecurityIssue
 	rbacScanner := scanner.NewRBACScanner()
-
 	if namespace == "" {
-		clusterRoles, err := client.Clientset.RbacV1().ClusterRoles().List(context.Background(), metav1.ListOptions{})
-		if err != nil {
-			log.Printf("Failed to list cluster roles: %v", err)
-		} else {
-			for _, role := range clusterRoles.Items {
-				roleIssues := rbacScanner.ScanClusterRole(&role)
-				issues = append(issues, roleIssues...)
-			}
+		clusterRoles, _ := client.Clientset.RbacV1().ClusterRoles().List(context.Background(), metav1.ListOptions{})
+		for _, role := range clusterRoles.Items {
+			issues = append(issues, rbacScanner.ScanClusterRole(&role)...)
 		}
 	}
-
-	roles, err := client.Clientset.RbacV1().Roles(namespace).List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		log.Printf("Failed to list roles: %v", err)
-		return issues
-	}
-
+	roles, _ := client.Clientset.RbacV1().Roles(namespace).List(context.Background(), metav1.ListOptions{})
 	for _, role := range roles.Items {
-		roleIssues := rbacScanner.ScanRole(&role, role.Namespace)
-		issues = append(issues, roleIssues...)
+		issues = append(issues, rbacScanner.ScanRole(&role, role.Namespace)...)
 	}
+	return issues
+}
 
+func scanResources(client *k8s.Client, namespace string) []scanner.SecurityIssue {
+	var issues []scanner.SecurityIssue
+	resourceScanner := scanner.NewResourceScanner()
+	pods, _ := client.Clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+	for _, pod := range pods.Items {
+		issues = append(issues, resourceScanner.ScanPodResources(&pod)...)
+	}
 	return issues
 }
 
@@ -151,232 +109,101 @@ func scanNetwork(client *k8s.Client, namespace string) []scanner.SecurityIssue {
 	var issues []scanner.SecurityIssue
 	netpolScanner := scanner.NewNetworkPolicyScanner()
 	nsScanner := scanner.NewNamespaceScanner()
-
-	var netpols []interface{}
-
+	netpols, _ := client.Clientset.NetworkingV1().NetworkPolicies(namespace).List(context.Background(), metav1.ListOptions{})
+	for _, policy := range netpols.Items {
+		issues = append(issues, netpolScanner.ScanNetworkPolicy(&policy, policy.Namespace)...)
+	}
+	var namespaces *corev1.NamespaceList
 	if namespace != "" {
-		netpolsRaw, err := client.Clientset.NetworkingV1().NetworkPolicies(namespace).List(context.Background(), metav1.ListOptions{})
-		if err != nil {
-			log.Printf("Failed to list network policies: %v", err)
-			return issues
-		}
-		for i := range netpolsRaw.Items {
-			netpols = append(netpols, &netpolsRaw.Items[i])
-		}
+		ns, _ := client.Clientset.CoreV1().Namespaces().Get(context.Background(), namespace, metav1.GetOptions{})
+		namespaces = &corev1.NamespaceList{Items: []corev1.Namespace{*ns}}
 	} else {
-		netpolsRaw, err := client.Clientset.NetworkingV1().NetworkPolicies("").List(context.Background(), metav1.ListOptions{})
-		if err != nil {
-			log.Printf("Failed to list network policies: %v", err)
-			return issues
-		}
-		for i := range netpolsRaw.Items {
-			netpols = append(netpols, &netpolsRaw.Items[i])
-		}
+		namespaces, _ = client.Clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
 	}
-
-	for _, np := range netpols {
-		policy := np.(*networkingv1.NetworkPolicy)
-		policyIssues := netpolScanner.ScanNetworkPolicy(policy, policy.Namespace)
-		issues = append(issues, policyIssues...)
+	for _, ns := range namespaces.Items {
+		issues = append(issues, nsScanner.ScanNamespace(ns.Name, netpols.Items)...)
 	}
-
-	var namespaceNames []string
-	if namespace != "" {
-		namespaceNames = append(namespaceNames, namespace)
-	} else {
-		namespaces, err := client.Clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
-		if err != nil {
-			log.Printf("Failed to list namespaces: %v", err)
-			return issues
-		}
-		for _, ns := range namespaces.Items {
-			namespaceNames = append(namespaceNames, ns.Name)
-		}
-	}
-
-	var policies []networkingv1.NetworkPolicy
-	if namespace != "" {
-		nsNetpols, err := client.Clientset.NetworkingV1().NetworkPolicies(namespace).List(context.Background(), metav1.ListOptions{})
-		if err == nil {
-			policies = nsNetpols.Items
-		}
-	} else {
-		allNetpols, err := client.Clientset.NetworkingV1().NetworkPolicies("").List(context.Background(), metav1.ListOptions{})
-		if err == nil {
-			policies = allNetpols.Items
-		}
-	}
-
-	for _, ns := range namespaceNames {
-		nsIssues := nsScanner.ScanNamespace(ns, policies)
-		issues = append(issues, nsIssues...)
-	}
-
 	return issues
 }
 
 func scanServiceAccounts(client *k8s.Client, namespace string) []scanner.SecurityIssue {
 	var issues []scanner.SecurityIssue
 	saScanner := scanner.NewServiceAccountScanner()
-
-	if namespace != "" {
-		serviceAccounts, err := client.Clientset.CoreV1().ServiceAccounts(namespace).List(context.Background(), metav1.ListOptions{})
-		if err != nil {
-			log.Printf("Failed to list service accounts: %v", err)
-			return issues
-		}
-		for _, sa := range serviceAccounts.Items {
-			issues = append(issues, saScanner.ScanServiceAccount(&sa)...)
-		}
-		return issues
+	sas, _ := client.Clientset.CoreV1().ServiceAccounts(namespace).List(context.Background(), metav1.ListOptions{})
+	for _, sa := range sas.Items {
+		issues = append(issues, saScanner.ScanServiceAccount(&sa)...)
 	}
-
-	nsList, err := client.Clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		log.Printf("Failed to list namespaces: %v", err)
-		return issues
-	}
-	for _, ns := range nsList.Items {
-		serviceAccounts, err := client.Clientset.CoreV1().ServiceAccounts(ns.Name).List(context.Background(), metav1.ListOptions{})
-		if err != nil {
-			log.Printf("Failed to list service accounts for namespace %s: %v", ns.Name, err)
-			continue
-		}
-		for _, sa := range serviceAccounts.Items {
-			issues = append(issues, saScanner.ScanServiceAccount(&sa)...)
-		}
-	}
-
 	return issues
 }
 
-func scanIngress(client *k8s.Client, namespace string) []scanner.SecurityIssue {
+func scanNodes(client *k8s.Client) []scanner.SecurityIssue {
 	var issues []scanner.SecurityIssue
-	ingressScanner := scanner.NewIngressScanner()
-
-	if namespace != "" {
-		ingresses, err := client.Clientset.NetworkingV1().Ingresses(namespace).List(context.Background(), metav1.ListOptions{})
-		if err != nil {
-			log.Printf("Failed to list ingresses: %v", err)
-			return issues
-		}
-		for _, ingress := range ingresses.Items {
-			issues = append(issues, ingressScanner.ScanIngress(&ingress)...)
-		}
-		return issues
+	nodeScanner := scanner.NewNodeScanner()
+	nodes, _ := client.Clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	for _, node := range nodes.Items {
+		issues = append(issues, nodeScanner.ScanNode(&node)...)
 	}
-
-	nsList, err := client.Clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		log.Printf("Failed to list namespaces: %v", err)
-		return issues
-	}
-	for _, ns := range nsList.Items {
-		ingresses, err := client.Clientset.NetworkingV1().Ingresses(ns.Name).List(context.Background(), metav1.ListOptions{})
-		if err != nil {
-			log.Printf("Failed to list ingresses for namespace %s: %v", ns.Name, err)
-			continue
-		}
-		for _, ingress := range ingresses.Items {
-			issues = append(issues, ingressScanner.ScanIngress(&ingress)...)
-		}
-	}
-
 	return issues
 }
 
-func outputResults(issues []scanner.SecurityIssue, format string, outputFile string) {
-	if len(issues) == 0 {
-		message := "No security issues found!"
-		fmt.Println(message)
-		if outputFile != "" {
-			if err := os.WriteFile(outputFile, []byte(message+"\n"), 0644); err != nil {
-				log.Printf("Failed to write output file: %v", err)
-			}
-		}
-		return
+func scanAvailability(client *k8s.Client, namespace string) []scanner.SecurityIssue {
+	var issues []scanner.SecurityIssue
+	availabilityScanner := scanner.NewAvailabilityScanner()
+	deployments, _ := client.Clientset.AppsV1().Deployments(namespace).List(context.Background(), metav1.ListOptions{})
+	for _, d := range deployments.Items {
+		issues = append(issues, availabilityScanner.ScanDeployment(&d)...)
 	}
-
-	if format == "json" {
-		jsonData, err := json.MarshalIndent(issues, "", "  ")
-		if err != nil {
-			log.Printf("Failed to marshal JSON: %v", err)
-			return
-		}
-		output := string(jsonData) + "\n"
-		fmt.Print(output)
-		if outputFile != "" {
-			if err := os.WriteFile(outputFile, []byte(output), 0644); err != nil {
-				log.Printf("Failed to write output file: %v", err)
-			}
-		}
-		return
+	statefulsets, _ := client.Clientset.AppsV1().StatefulSets(namespace).List(context.Background(), metav1.ListOptions{})
+	for _, s := range statefulsets.Items {
+		issues = append(issues, availabilityScanner.ScanStatefulSet(&s)...)
 	}
-
-	output := buildHumanOutput(issues, format)
-	fmt.Print(output)
-	if outputFile != "" {
-		if err := os.WriteFile(outputFile, []byte(output), 0644); err != nil {
-			log.Printf("Failed to write output file: %v", err)
-		}
-	}
+	return issues
 }
 
-func buildHumanOutput(issues []scanner.SecurityIssue, format string) string {
-	if format == "markdown" || format == "md" {
-		return buildMarkdownOutput(issues)
+func scanQuotas(client *k8s.Client, namespace string) []scanner.SecurityIssue {
+	var issues []scanner.SecurityIssue
+	quotaScanner := scanner.NewNamespaceQuotaScanner()
+	var namespaces *corev1.NamespaceList
+	if namespace != "" {
+		ns, _ := client.Clientset.CoreV1().Namespaces().Get(context.Background(), namespace, metav1.GetOptions{})
+		namespaces = &corev1.NamespaceList{Items: []corev1.Namespace{*ns}}
+	} else {
+		namespaces, _ = client.Clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
 	}
+	for _, ns := range namespaces.Items {
+		quotas, _ := client.Clientset.CoreV1().ResourceQuotas(ns.Name).List(context.Background(), metav1.ListOptions{})
+		limitRanges, _ := client.Clientset.CoreV1().LimitRanges(ns.Name).List(context.Background(), metav1.ListOptions{})
+		issues = append(issues, quotaScanner.ScanNamespace(ns.Name, quotas.Items, limitRanges.Items)...)
+	}
+	return issues
+}
 
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("Found %d security issues:\n\n", len(issues)))
-
+func outputResults(issues []scanner.SecurityIssue, format string) {
+	if len(issues) == 0 {
+		fmt.Println("No security issues found!")
+		return
+	}
+	if format == "json" {
+		jsonData, _ := json.MarshalIndent(issues, "", "  ")
+		fmt.Println(string(jsonData))
+		return
+	}
+	fmt.Printf("Found %d security issues:\n\n", len(issues))
 	severityGroups := make(map[string][]scanner.SecurityIssue)
 	for _, issue := range issues {
 		severityGroups[issue.Severity] = append(severityGroups[issue.Severity], issue)
 	}
-
 	for _, severity := range []string{"HIGH", "MEDIUM", "LOW"} {
 		if issues, exists := severityGroups[severity]; exists && len(issues) > 0 {
-			builder.WriteString(fmt.Sprintf("%s SEVERITY:\n", severity))
-			builder.WriteString(strings.Repeat("=", len(severity)+9))
-			builder.WriteString("\n")
+			fmt.Printf("%s SEVERITY:\n", severity)
+			fmt.Println(strings.Repeat("=", len(severity)+9))
 			for _, issue := range issues {
-				builder.WriteString(fmt.Sprintf("Resource: %s/%s\n", issue.Resource, issue.Name))
+				fmt.Printf("Resource: %s/%s\n", issue.Resource, issue.Name)
 				if issue.Namespace != "" {
-					builder.WriteString(fmt.Sprintf("Namespace: %s\n", issue.Namespace))
+					fmt.Printf("Namespace: %s\n", issue.Namespace)
 				}
-				builder.WriteString(fmt.Sprintf("Issue: %s\n\n", issue.Description))
+				fmt.Printf("Issue: %s\n\n", issue.Description)
 			}
 		}
 	}
-
-	return builder.String()
-}
-
-func buildMarkdownOutput(issues []scanner.SecurityIssue) string {
-	var builder strings.Builder
-	builder.WriteString("# PodGuard Security Report\n\n")
-	builder.WriteString(fmt.Sprintf("Found %d security issues.\n\n", len(issues)))
-
-	counts := map[string]int{"HIGH": 0, "MEDIUM": 0, "LOW": 0}
-	for _, issue := range issues {
-		counts[issue.Severity]++
-	}
-	builder.WriteString("Severity summary:\n")
-	builder.WriteString(fmt.Sprintf("- HIGH: %d\n", counts["HIGH"]))
-	builder.WriteString(fmt.Sprintf("- MEDIUM: %d\n", counts["MEDIUM"]))
-	builder.WriteString(fmt.Sprintf("- LOW: %d\n\n", counts["LOW"]))
-
-	builder.WriteString("| Severity | Resource | Namespace | Name | Issue |\n")
-	builder.WriteString("| --- | --- | --- | --- | --- |\n")
-	for _, issue := range issues {
-		namespace := issue.Namespace
-		if namespace == "" {
-			namespace = "-"
-		}
-		description := strings.ReplaceAll(issue.Description, "\n", " ")
-		builder.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n", issue.Severity, issue.Resource, namespace, issue.Name, description))
-	}
-
-	return builder.String()
 }
