@@ -32,6 +32,8 @@ A simple Kubernetes security scanning tool written in Go.
 
 - **Pod Security Standards (PSS)**: Checks namespace PSS label coverage
 
+- **Secrets Exposure Scanning**: Detects secret leaks via env vars and ConfigMaps
+
 - **Resource Hygiene Scanning**: Highlights missing resource requests/limits
 
 - **ServiceAccount Scanning**: Finds service accounts that auto-mount tokens
@@ -73,7 +75,7 @@ go build -o podguard ./cmd/podguard
 - `-namespace`: Namespace to scan (default: all namespaces)
 - `-output`: Output format (table, json, markdown) (default: table)
 - `-output-file`: Write output to a file (optional)
-- `-type`: Scan type (pods, rbac, network, resources, serviceaccounts, services, ingress, pss, all) (default: all)
+- `-type`: Scan type (pods, rbac, network, resources, serviceaccounts, services, ingress, pss, secrets, all) (default: all)
 
 ## Security Checks
 
@@ -101,6 +103,11 @@ go build -o podguard ./cmd/podguard
 - **HIGH**: Enforced `privileged` policy
 - **MEDIUM**: Missing enforce label
 - **LOW**: Missing warn/audit/enforce version labels
+
+### Secrets Exposure
+- **HIGH**: Plaintext secrets in ConfigMaps
+- **MEDIUM**: Secrets injected via environment variables
+- **LOW**: Mutable secrets without `immutable: true`
 
 ### ServiceAccount Security
 - **MEDIUM**: Default service account auto-mounts token

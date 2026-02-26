@@ -22,7 +22,7 @@ func main() {
 	namespace := flag.String("namespace", "", "Namespace to scan (default: all namespaces)")
 	outputFormat := flag.String("output", "table", "Output format (table, json, markdown)")
 	outputFile := flag.String("output-file", "", "Write output to a file (optional)")
-	scanType := flag.String("type", "all", "Scan type (pods, rbac, network, resources, serviceaccounts, ingress, all)")
+	scanType := flag.String("type", "all", "Scan type (pods, rbac, network, resources, serviceaccounts, services, ingress, pss, secrets, all)")
 	flag.Parse()
 
 	client, err := k8s.NewClient(*kubeconfig)
@@ -57,9 +57,24 @@ func main() {
 		allIssues = append(allIssues, serviceAccountIssues...)
 	}
 
+	if *scanType == "services" || *scanType == "all" {
+		serviceIssues := scanServices(client, *namespace)
+		allIssues = append(allIssues, serviceIssues...)
+	}
+
 	if *scanType == "ingress" || *scanType == "all" {
 		ingressIssues := scanIngress(client, *namespace)
 		allIssues = append(allIssues, ingressIssues...)
+	}
+
+	if *scanType == "pss" || *scanType == "all" {
+		pssIssues := scanPodSecurityStandards(client, *namespace)
+		allIssues = append(allIssues, pssIssues...)
+	}
+
+	if *scanType == "secrets" || *scanType == "all" {
+		secretIssues := scanSecrets(client, *namespace)
+		allIssues = append(allIssues, secretIssues...)
 	}
 
 	outputResults(allIssues, *outputFormat, *outputFile)
@@ -229,6 +244,41 @@ func scanServiceAccounts(client *k8s.Client, namespace string) []scanner.Securit
 	return issues
 }
 
+func scanServices(client *k8s.Client, namespace string) []scanner.SecurityIssue {
+	var issues []scanner.SecurityIssue
+	serviceScanner := scanner.NewServiceScanner()
+
+	if namespace != "" {
+		services, err := client.Clientset.CoreV1().Services(namespace).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list services: %v", err)
+			return issues
+		}
+		for _, service := range services.Items {
+			issues = append(issues, serviceScanner.ScanService(&service)...)
+		}
+		return issues
+	}
+
+	nsList, err := client.Clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		log.Printf("Failed to list namespaces: %v", err)
+		return issues
+	}
+	for _, ns := range nsList.Items {
+		services, err := client.Clientset.CoreV1().Services(ns.Name).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list services for namespace %s: %v", ns.Name, err)
+			continue
+		}
+		for _, service := range services.Items {
+			issues = append(issues, serviceScanner.ScanService(&service)...)
+		}
+	}
+
+	return issues
+}
+
 func scanIngress(client *k8s.Client, namespace string) []scanner.SecurityIssue {
 	var issues []scanner.SecurityIssue
 	ingressScanner := scanner.NewIngressScanner()
@@ -258,6 +308,111 @@ func scanIngress(client *k8s.Client, namespace string) []scanner.SecurityIssue {
 		}
 		for _, ingress := range ingresses.Items {
 			issues = append(issues, ingressScanner.ScanIngress(&ingress)...)
+		}
+	}
+
+	return issues
+}
+
+func scanPodSecurityStandards(client *k8s.Client, namespace string) []scanner.SecurityIssue {
+	var issues []scanner.SecurityIssue
+	pssScanner := scanner.NewPodSecurityStandardsScanner()
+
+	if namespace != "" {
+		ns, err := client.Clientset.CoreV1().Namespaces().Get(context.Background(), namespace, metav1.GetOptions{})
+		if err != nil {
+			log.Printf("Failed to get namespace %s: %v", namespace, err)
+			return issues
+		}
+		return pssScanner.ScanNamespace(ns)
+	}
+
+	nsList, err := client.Clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		log.Printf("Failed to list namespaces: %v", err)
+		return issues
+	}
+	for i := range nsList.Items {
+		ns := &nsList.Items[i]
+		issues = append(issues, pssScanner.ScanNamespace(ns)...)
+	}
+
+	return issues
+}
+
+func scanSecrets(client *k8s.Client, namespace string) []scanner.SecurityIssue {
+	var issues []scanner.SecurityIssue
+	secretScanner := scanner.NewSecretScanner()
+
+	if namespace != "" {
+		pods, err := client.Clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list pods: %v", err)
+		} else {
+			for i := range pods.Items {
+				podIssues := secretScanner.ScanPod(&pods.Items[i])
+				issues = append(issues, podIssues...)
+			}
+		}
+
+		configmaps, err := client.Clientset.CoreV1().ConfigMaps(namespace).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list configmaps: %v", err)
+		} else {
+			for i := range configmaps.Items {
+				cmIssues := secretScanner.ScanConfigMap(&configmaps.Items[i])
+				issues = append(issues, cmIssues...)
+			}
+		}
+
+		secrets, err := client.Clientset.CoreV1().Secrets(namespace).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list secrets: %v", err)
+		} else {
+			for i := range secrets.Items {
+				secretIssues := secretScanner.ScanSecret(&secrets.Items[i])
+				issues = append(issues, secretIssues...)
+			}
+		}
+
+		return issues
+	}
+
+	nsList, err := client.Clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		log.Printf("Failed to list namespaces: %v", err)
+		return issues
+	}
+
+	for _, ns := range nsList.Items {
+		pods, err := client.Clientset.CoreV1().Pods(ns.Name).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list pods in namespace %s: %v", ns.Name, err)
+		} else {
+			for i := range pods.Items {
+				podIssues := secretScanner.ScanPod(&pods.Items[i])
+				issues = append(issues, podIssues...)
+			}
+		}
+
+		configmaps, err := client.Clientset.CoreV1().ConfigMaps(ns.Name).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list configmaps in namespace %s: %v", ns.Name, err)
+		} else {
+			for i := range configmaps.Items {
+				cmIssues := secretScanner.ScanConfigMap(&configmaps.Items[i])
+				issues = append(issues, cmIssues...)
+			}
+		}
+
+		secrets, err := client.Clientset.CoreV1().Secrets(ns.Name).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list secrets in namespace %s: %v", ns.Name, err)
+		} else {
+			for i := range secrets.Items {
+				secretIssues := secretScanner.ScanSecret(&secrets.Items[i])
+				issues = append(issues, secretIssues...)
+			}
 		}
 	}
 
