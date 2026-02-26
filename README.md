@@ -11,6 +11,7 @@ A simple Kubernetes security scanning tool written in Go.
   - Host network/PID/IPC namespace sharing
   - Host ports and sensitive host path mounts
   - Service account token automounting and default service account usage
+  - Mutable image tags (`:latest` or no tag)
 
 - **RBAC Security Scanning**: Identifies dangerous RBAC permissions
   - Wildcard verbs/resources/API groups
@@ -21,6 +22,12 @@ A simple Kubernetes security scanning tool written in Go.
 - **NetworkPolicy Scanning**: Flags risky or missing network policies
   - Missing default-deny ingress/egress per namespace
   - Overly permissive ingress/egress rules
+
+- **Ingress Scanning**: Highlights TLS gaps and backend misconfigurations
+
+- **Service Exposure Scanning**: Flags NodePort/LoadBalancer exposure and external IPs
+
+- **Pod Security Standards (PSS)**: Checks namespace PSS label coverage
 
 - **Resource Hygiene Scanning**: Highlights missing resource requests/limits
 
@@ -63,13 +70,13 @@ go build -o podguard ./cmd/podguard
 - `-namespace`: Namespace to scan (default: all namespaces)
 - `-output`: Output format (table, json, markdown) (default: table)
 - `-output-file`: Write output to a file (optional)
-- `-type`: Scan type (pods, rbac, network, resources, serviceaccounts, all) (default: all)
+- `-type`: Scan type (pods, rbac, network, resources, serviceaccounts, services, ingress, pss, all) (default: all)
 
 ## Security Checks
 
 ### Pod Security
 - **HIGH**: Privileged containers, privilege escalation, unconfined seccomp, host PID sharing, sensitive host path mounts
-- **MEDIUM**: Root user execution, host network/IPC sharing, missing seccomp, host ports, token automounting
+- **MEDIUM**: Root user execution, host network/IPC sharing, missing seccomp, host ports, token automounting, mutable tags
 - **LOW**: Writable root filesystem, missing readOnlyRootFilesystem, default service account usage, missing runAsNonRoot
 
 ### RBAC Security
@@ -79,6 +86,18 @@ go build -o podguard ./cmd/podguard
 ### NetworkPolicy Security
 - **HIGH**: Namespace missing default deny ingress/egress
 - **MEDIUM**: Namespace missing egress policies, overly permissive rules
+
+### Ingress Security
+- **MEDIUM**: Missing TLS or TLS secret name
+- **LOW**: Backend port not specified
+
+### Service Exposure Security
+- **MEDIUM**: NodePort/LoadBalancer exposure, external IPs, missing LB source ranges
+
+### Pod Security Standards
+- **HIGH**: Enforced `privileged` policy
+- **MEDIUM**: Missing enforce label
+- **LOW**: Missing warn/audit/enforce version labels
 
 ### ServiceAccount Security
 - **MEDIUM**: Default service account auto-mounts token

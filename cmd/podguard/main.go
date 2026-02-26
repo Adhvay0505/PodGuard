@@ -22,7 +22,7 @@ func main() {
 	namespace := flag.String("namespace", "", "Namespace to scan (default: all namespaces)")
 	outputFormat := flag.String("output", "table", "Output format (table, json, markdown)")
 	outputFile := flag.String("output-file", "", "Write output to a file (optional)")
-	scanType := flag.String("type", "all", "Scan type (pods, rbac, network, resources, serviceaccounts, all)")
+	scanType := flag.String("type", "all", "Scan type (pods, rbac, network, resources, serviceaccounts, ingress, all)")
 	flag.Parse()
 
 	client, err := k8s.NewClient(*kubeconfig)
@@ -55,6 +55,11 @@ func main() {
 	if *scanType == "serviceaccounts" || *scanType == "all" {
 		serviceAccountIssues := scanServiceAccounts(client, *namespace)
 		allIssues = append(allIssues, serviceAccountIssues...)
+	}
+
+	if *scanType == "ingress" || *scanType == "all" {
+		ingressIssues := scanIngress(client, *namespace)
+		allIssues = append(allIssues, ingressIssues...)
 	}
 
 	outputResults(allIssues, *outputFormat, *outputFile)
@@ -239,6 +244,41 @@ func scanServiceAccounts(client *k8s.Client, namespace string) []scanner.Securit
 		}
 		for _, sa := range serviceAccounts.Items {
 			issues = append(issues, saScanner.ScanServiceAccount(&sa)...)
+		}
+	}
+
+	return issues
+}
+
+func scanIngress(client *k8s.Client, namespace string) []scanner.SecurityIssue {
+	var issues []scanner.SecurityIssue
+	ingressScanner := scanner.NewIngressScanner()
+
+	if namespace != "" {
+		ingresses, err := client.Clientset.NetworkingV1().Ingresses(namespace).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list ingresses: %v", err)
+			return issues
+		}
+		for _, ingress := range ingresses.Items {
+			issues = append(issues, ingressScanner.ScanIngress(&ingress)...)
+		}
+		return issues
+	}
+
+	nsList, err := client.Clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		log.Printf("Failed to list namespaces: %v", err)
+		return issues
+	}
+	for _, ns := range nsList.Items {
+		ingresses, err := client.Clientset.NetworkingV1().Ingresses(ns.Name).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list ingresses for namespace %s: %v", ns.Name, err)
+			continue
+		}
+		for _, ingress := range ingresses.Items {
+			issues = append(issues, ingressScanner.ScanIngress(&ingress)...)
 		}
 	}
 
