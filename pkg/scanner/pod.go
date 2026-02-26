@@ -103,8 +103,17 @@ func (s *PodScanner) ScanPod(pod *corev1.Pod) []SecurityIssue {
 func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containerType string) []SecurityIssue {
 	var issues []SecurityIssue
 
-	if container.SecurityContext != nil {
-		if container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
+	securityContext := container.SecurityContext
+	if securityContext == nil {
+		issues = append(issues, SecurityIssue{
+			Severity:    "MEDIUM",
+			Resource:    "Pod",
+			Namespace:   pod.Namespace,
+			Name:        pod.Name,
+			Description: fmt.Sprintf("%s '%s' does not define a securityContext", containerType, container.Name),
+		})
+	} else {
+		if securityContext.Privileged != nil && *securityContext.Privileged {
 			issues = append(issues, SecurityIssue{
 				Severity:    "HIGH",
 				Resource:    "Pod",
@@ -114,7 +123,7 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 			})
 		}
 
-		if container.SecurityContext.AllowPrivilegeEscalation == nil {
+		if securityContext.AllowPrivilegeEscalation == nil {
 			issues = append(issues, SecurityIssue{
 				Severity:    "MEDIUM",
 				Resource:    "Pod",
@@ -122,7 +131,7 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 				Name:        pod.Name,
 				Description: fmt.Sprintf("%s '%s' does not explicitly set allowPrivilegeEscalation", containerType, container.Name),
 			})
-		} else if *container.SecurityContext.AllowPrivilegeEscalation {
+		} else if *securityContext.AllowPrivilegeEscalation {
 			issues = append(issues, SecurityIssue{
 				Severity:    "HIGH",
 				Resource:    "Pod",
@@ -132,7 +141,7 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 			})
 		}
 
-		if container.SecurityContext.RunAsUser != nil && *container.SecurityContext.RunAsUser == 0 {
+		if securityContext.RunAsUser != nil && *securityContext.RunAsUser == 0 {
 			issues = append(issues, SecurityIssue{
 				Severity:    "MEDIUM",
 				Resource:    "Pod",
@@ -142,7 +151,7 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 			})
 		}
 
-		if container.SecurityContext.ReadOnlyRootFilesystem == nil {
+		if securityContext.ReadOnlyRootFilesystem == nil {
 			issues = append(issues, SecurityIssue{
 				Severity:    "LOW",
 				Resource:    "Pod",
@@ -150,7 +159,7 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 				Name:        pod.Name,
 				Description: fmt.Sprintf("%s '%s' does not set readOnlyRootFilesystem", containerType, container.Name),
 			})
-		} else if !*container.SecurityContext.ReadOnlyRootFilesystem {
+		} else if !*securityContext.ReadOnlyRootFilesystem {
 			issues = append(issues, SecurityIssue{
 				Severity:    "LOW",
 				Resource:    "Pod",
@@ -160,9 +169,9 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 			})
 		}
 
-		if container.SecurityContext.Capabilities != nil && len(container.SecurityContext.Capabilities.Add) > 0 {
+		if securityContext.Capabilities != nil && len(securityContext.Capabilities.Add) > 0 {
 			severity := "MEDIUM"
-			for _, cap := range container.SecurityContext.Capabilities.Add {
+			for _, cap := range securityContext.Capabilities.Add {
 				if cap == "SYS_ADMIN" {
 					severity = "HIGH"
 					break
@@ -173,11 +182,11 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 				Resource:    "Pod",
 				Namespace:   pod.Namespace,
 				Name:        pod.Name,
-				Description: fmt.Sprintf("%s '%s' adds Linux capabilities: %v", containerType, container.Name, container.SecurityContext.Capabilities.Add),
+				Description: fmt.Sprintf("%s '%s' adds Linux capabilities: %v", containerType, container.Name, securityContext.Capabilities.Add),
 			})
 		}
 
-		seccompProfile := container.SecurityContext.SeccompProfile
+		seccompProfile := securityContext.SeccompProfile
 		if seccompProfile == nil && pod.Spec.SecurityContext != nil {
 			seccompProfile = pod.Spec.SecurityContext.SeccompProfile
 		}
@@ -219,6 +228,16 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 		})
 	}
 
+	if usesMutableImageTag(container.Image) {
+		issues = append(issues, SecurityIssue{
+			Severity:    "MEDIUM",
+			Resource:    "Pod",
+			Namespace:   pod.Namespace,
+			Name:        pod.Name,
+			Description: fmt.Sprintf("%s '%s' uses a mutable image tag (%s)", containerType, container.Name, container.Image),
+		})
+	}
+
 	for _, port := range container.Ports {
 		if port.HostPort > 0 {
 			issues = append(issues, SecurityIssue{
@@ -244,6 +263,23 @@ func effectiveRunAsNonRoot(pod *corev1.Pod, container corev1.Container) *bool {
 	return nil
 }
 
+func usesMutableImageTag(image string) bool {
+	if image == "" {
+		return false
+	}
+	if strings.Contains(image, "@sha256:") {
+		return false
+	}
+
+	lastColon := strings.LastIndex(image, ":")
+	lastSlash := strings.LastIndex(image, "/")
+	if lastColon == -1 || lastColon < lastSlash {
+		return true
+	}
+	tag := image[lastColon+1:]
+	return tag == "" || tag == "latest"
+}
+
 func isSensitiveHostPath(path string) bool {
 	sensitivePrefixes := []string{
 		"/boot",
@@ -261,6 +297,9 @@ func isSensitiveHostPath(path string) bool {
 		"/var/lib/kubelet",
 		"/var/lib/docker",
 		"/var/run",
+		"/var/run/docker.sock",
+		"/run/containerd",
+		"/run/containerd/containerd.sock",
 	}
 	for _, prefix := range sensitivePrefixes {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
