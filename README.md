@@ -3,17 +3,28 @@ A simple Kubernetes security scanning tool written in Go.
 
 ## Features
 
-- **Pod Security Scanning**: Detects common pod security issues
-  - Privileged containers
-  - Root user execution
-  - Writable root filesystem
+- **Pod Security Scanning**: Detects risky pod and container settings
+  - Privileged containers and privilege escalation
+  - Root user execution and missing `runAsNonRoot`
+  - Writable root filesystem and missing `readOnlyRootFilesystem`
+  - Missing or unconfined seccomp profiles
   - Host network/PID/IPC namespace sharing
-  - Sensitive host path mounts
+  - Host ports and sensitive host path mounts
+  - Service account token automounting and default service account usage
 
-- **RBAC Security Scanning**: Identifies risky RBAC configurations
-  - Wildcard verbs (*)
-  - Wildcard resources (*)
-  - Wildcard API groups (*)
+- **RBAC Security Scanning**: Identifies dangerous RBAC permissions
+  - Wildcard verbs/resources/API groups
+  - Role escalation, bind, and impersonation verbs
+  - Secret read access
+  - Pod exec/port-forward and workload mutation
+
+- **NetworkPolicy Scanning**: Flags risky or missing network policies
+  - Missing default-deny ingress/egress per namespace
+  - Overly permissive ingress/egress rules
+
+- **Resource Hygiene Scanning**: Highlights missing resource requests/limits
+
+- **ServiceAccount Scanning**: Finds service accounts that auto-mount tokens
 
 ## Installation
 
@@ -39,6 +50,9 @@ go build -o podguard ./cmd/podguard
 # Output in JSON format
 ./podguard -output json
 
+# Output to Markdown file
+./podguard -output markdown -output-file report.md
+
 # Use custom kubeconfig
 ./podguard -kubeconfig ~/.kube/config
 ```
@@ -47,19 +61,28 @@ go build -o podguard ./cmd/podguard
 
 - `-kubeconfig`: Path to kubeconfig file (default: uses in-cluster config or ~/.kube/config)
 - `-namespace`: Namespace to scan (default: all namespaces)
-- `-output`: Output format (table, json) (default: table)
-- `-type`: Scan type (pods, rbac, all) (default: all)
+- `-output`: Output format (table, json, markdown) (default: table)
+- `-output-file`: Write output to a file (optional)
+- `-type`: Scan type (pods, rbac, network, resources, serviceaccounts, all) (default: all)
 
 ## Security Checks
 
 ### Pod Security
-- **HIGH**: Privileged containers, host PID sharing, sensitive host path mounts
-- **MEDIUM**: Root user execution, host network/IPC sharing
-- **LOW**: Writable root filesystem
+- **HIGH**: Privileged containers, privilege escalation, unconfined seccomp, host PID sharing, sensitive host path mounts
+- **MEDIUM**: Root user execution, host network/IPC sharing, missing seccomp, host ports, token automounting
+- **LOW**: Writable root filesystem, missing readOnlyRootFilesystem, default service account usage, missing runAsNonRoot
 
 ### RBAC Security
-- **HIGH**: Wildcard verbs or resources in roles
-- **MEDIUM**: Wildcard API groups in cluster roles
+- **HIGH**: Wildcard verbs/resources, escalation/bind/impersonate, secret read, pod exec
+- **MEDIUM**: Wildcard API groups, pod port-forward, workload mutation
+
+### NetworkPolicy Security
+- **HIGH**: Namespace missing default deny ingress/egress
+- **MEDIUM**: Namespace missing egress policies, overly permissive rules
+
+### ServiceAccount Security
+- **MEDIUM**: Default service account auto-mounts token
+- **LOW**: Non-default service account auto-mounts token
 
 ## Example Output
 
