@@ -1,6 +1,6 @@
 # Codex Branch Guidelines
 
-This branch is for Codex agent only.
+This branch is for gemini agent only.
 
 ## Rules
 1. All work must remain in this branch.
