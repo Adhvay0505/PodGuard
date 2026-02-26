@@ -62,6 +62,16 @@ func (s *PodScanner) ScanPod(pod *corev1.Pod) []SecurityIssue {
 		})
 	}
 
+	if pod.Spec.ShareProcessNamespace != nil && *pod.Spec.ShareProcessNamespace {
+		issues = append(issues, SecurityIssue{
+			Severity:    "HIGH",
+			Resource:    "Pod",
+			Namespace:   pod.Namespace,
+			Name:        pod.Name,
+			Description: "Pod is sharing a process namespace between containers",
+		})
+	}
+
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		issues = append(issues, SecurityIssue{
 			Severity:    "MEDIUM",
@@ -186,6 +196,16 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 			})
 		}
 
+		if securityContext.Capabilities == nil || !dropsAllCapabilities(securityContext.Capabilities.Drop) {
+			issues = append(issues, SecurityIssue{
+				Severity:    "MEDIUM",
+				Resource:    "Pod",
+				Namespace:   pod.Namespace,
+				Name:        pod.Name,
+				Description: fmt.Sprintf("%s '%s' does not drop all Linux capabilities", containerType, container.Name),
+			})
+		}
+
 		seccompProfile := securityContext.SeccompProfile
 		if seccompProfile == nil && pod.Spec.SecurityContext != nil {
 			seccompProfile = pod.Spec.SecurityContext.SeccompProfile
@@ -205,6 +225,16 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 				Namespace:   pod.Namespace,
 				Name:        pod.Name,
 				Description: fmt.Sprintf("%s '%s' uses an unconfined seccomp profile", containerType, container.Name),
+			})
+		}
+
+		if securityContext.ProcMount != nil && *securityContext.ProcMount == corev1.UnmaskedProcMount {
+			issues = append(issues, SecurityIssue{
+				Severity:    "HIGH",
+				Resource:    "Pod",
+				Namespace:   pod.Namespace,
+				Name:        pod.Name,
+				Description: fmt.Sprintf("%s '%s' uses an unmasked /proc mount", containerType, container.Name),
 			})
 		}
 	}
@@ -236,6 +266,18 @@ func scanContainerSecurity(pod *corev1.Pod, container corev1.Container, containe
 			Name:        pod.Name,
 			Description: fmt.Sprintf("%s '%s' uses a mutable image tag (%s)", containerType, container.Name, container.Image),
 		})
+	}
+
+	for _, env := range container.Env {
+		if env.Value != "" && isSensitiveEnvName(env.Name) {
+			issues = append(issues, SecurityIssue{
+				Severity:    "HIGH",
+				Resource:    "Pod",
+				Namespace:   pod.Namespace,
+				Name:        pod.Name,
+				Description: fmt.Sprintf("%s '%s' has hardcoded secret value in env var %s", containerType, container.Name, env.Name),
+			})
+		}
 	}
 
 	for _, port := range container.Ports {
@@ -278,6 +320,39 @@ func usesMutableImageTag(image string) bool {
 	}
 	tag := image[lastColon+1:]
 	return tag == "" || tag == "latest"
+}
+
+func dropsAllCapabilities(drops []corev1.Capability) bool {
+	for _, drop := range drops {
+		if drop == "ALL" {
+			return true
+		}
+	}
+	return false
+}
+
+func isSensitiveEnvName(name string) bool {
+	normalized := strings.ToLower(name)
+	keywords := []string{
+		"password",
+		"passwd",
+		"pwd",
+		"secret",
+		"token",
+		"apikey",
+		"api_key",
+		"accesskey",
+		"access_key",
+		"privatekey",
+		"private_key",
+		"jwt",
+	}
+	for _, keyword := range keywords {
+		if strings.Contains(normalized, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func isSensitiveHostPath(path string) bool {
