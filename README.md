@@ -9,9 +9,12 @@ A simple Kubernetes security scanning tool written in Go.
   - Writable root filesystem and missing `readOnlyRootFilesystem`
   - Missing or unconfined seccomp profiles
   - Host network/PID/IPC namespace sharing
+  - Shared process namespaces and unmasked `/proc`
   - Host ports and sensitive host path mounts
   - Service account token automounting and default service account usage
   - Mutable image tags (`:latest` or no tag)
+  - Hardcoded secrets in environment variables
+  - Missing `capabilities.drop: ["ALL"]`
 
 - **RBAC Security Scanning**: Identifies dangerous RBAC permissions
   - Wildcard verbs/resources/API groups
@@ -75,8 +78,8 @@ go build -o podguard ./cmd/podguard
 ## Security Checks
 
 ### Pod Security
-- **HIGH**: Privileged containers, privilege escalation, unconfined seccomp, host PID sharing, sensitive host path mounts
-- **MEDIUM**: Root user execution, host network/IPC sharing, missing seccomp, host ports, token automounting, mutable tags
+- **HIGH**: Privileged containers, privilege escalation, unconfined seccomp, host PID sharing, shared process namespaces, unmasked `/proc`, sensitive host path mounts, hardcoded secret env vars
+- **MEDIUM**: Root user execution, host network/IPC sharing, missing seccomp, host ports, token automounting, mutable tags, missing capability drops
 - **LOW**: Writable root filesystem, missing readOnlyRootFilesystem, default service account usage, missing runAsNonRoot
 
 ### RBAC Security
