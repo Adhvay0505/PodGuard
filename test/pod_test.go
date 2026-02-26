@@ -25,12 +25,21 @@ func TestPodScanner_ScanPod(t *testing.T) {
 							Name:  "secure-container",
 							Image: "nginx:latest",
 							SecurityContext: &corev1.SecurityContext{
-								RunAsUser:              int64Ptr(1000),
-								ReadOnlyRootFilesystem: boolPtr(true),
-								Privileged:             boolPtr(false),
+								RunAsUser:                int64Ptr(1000),
+								ReadOnlyRootFilesystem:   boolPtr(true),
+								Privileged:               boolPtr(false),
+								AllowPrivilegeEscalation: boolPtr(false),
+								SeccompProfile: &corev1.SeccompProfile{
+									Type: corev1.SeccompProfileTypeRuntimeDefault,
+								},
 							},
 						},
 					},
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: boolPtr(true),
+					},
+					ServiceAccountName:           "secure-sa",
+					AutomountServiceAccountToken: boolPtr(false),
 				},
 			},
 			expected: 0,
@@ -50,7 +59,7 @@ func TestPodScanner_ScanPod(t *testing.T) {
 					},
 				},
 			},
-			expected: 1,
+			expected: 7,
 		},
 		{
 			name: "Pod with multiple security issues",
@@ -81,7 +90,7 @@ func TestPodScanner_ScanPod(t *testing.T) {
 					},
 				},
 			},
-			expected: 6,
+			expected: 11,
 		},
 	}
 
@@ -89,6 +98,9 @@ func TestPodScanner_ScanPod(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			issues := scanner.ScanPod(tt.pod)
 			if len(issues) != tt.expected {
+				for _, issue := range issues {
+					t.Logf("Issue: %+v", issue)
+				}
 				t.Errorf("Expected %d issues, got %d", tt.expected, len(issues))
 			}
 		})
